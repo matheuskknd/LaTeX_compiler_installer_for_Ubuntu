@@ -158,7 +158,9 @@ function main(){
 	read -s aux; unset aux;
 	echo ''
 
-	sudo perl "$dir_name"/install-tl -gui
+	cd "$dir_name"
+	sudo perl 'install-tl' -gui
+	cd ..
 
 	################ Pos-installation procedures ################
 
