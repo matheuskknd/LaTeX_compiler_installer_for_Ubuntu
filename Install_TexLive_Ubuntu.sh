@@ -12,9 +12,59 @@ exit -1;}
 
 function know_command(){
 
-	if [ -n "$(whereis $1 | cut -d':' -f2)" ] ; then return 0; fi
+	which "$1" >'/dev/null' 2>&1
 
-return -1;}
+return $?;}
+
+
+function assert_comands_exist(){
+
+	local i;
+
+	for i in $@ ; do
+
+		if ! which "$i" >'/dev/null' 2>&1 ; then
+
+			echo -e "\nThis script is not suported here. Command '$i' wasn't found!"
+			close;
+		fi
+
+	done
+
+return 0;}
+
+
+function define_PKG(){
+
+	if [ -f '/etc/redhat-release' ] ; then
+
+		PKG='yum install'
+
+	elif [ -f '/etc/arch-release' ] ; then
+
+		PKG='pacman -S'
+
+	elif [ -f '/etc/SuSe-release' ] ; then
+
+		PKG='zypper install'
+
+	elif [ -f '/etc/debian_version' ] ; then
+
+		if know_command 'apt-get' ; then
+
+			PKG='apt-get install'
+		else
+
+			PKG='apt install'
+		fi
+	fi
+
+	local aux=${aux%' -S'}
+	aux=${PKG%' install'}
+
+	know_command "$aux"
+
+return $?;}
 
 
 function add_to_sudo(){
@@ -27,13 +77,18 @@ function add_to_sudo(){
 	local file_name; local original; local temp; local aux; local all;
 
 	file_name=".temp_bash_$RANDOM"
-	sudo cat '/etc/sudoers' >$file_name
+	echo '' >$file_name
+
+	sudo chown 0 $file_name
+	sudo chmod 700 $file_name
+
+	if ! sudo cat '/etc/sudoers' >$file_name 2>&- ; then rm $file_name; return 2; fi
 
 	################################
 
 	original="$( cat $file_name | grep 'secure_path')"	#original line...
 
-	if [[ "$original" =~ "$1" ]] ; then rm $file_name; return 2; fi	#Already has...
+	if [[ "$original" =~ "$1" ]] ; then rm $file_name; return 4; fi	#Already has...
 
 	################################
 
@@ -42,34 +97,39 @@ function add_to_sudo(){
 
 	################################
 
-	all="$( cat $file_name)"
+	all=$(cat $file_name);
 
 	original="secure_path${original#*secure_path}"
 
-	temp="${all%secure_path*}"
+	temp=${all%secure_path*}
 	all=${all:(( ${#temp} + ${#original} ))}
 
-	echo "$temp""$aux""$all" >$file_name
+	echo "${temp}${aux}${all}" >$file_name
 
-	if ! sudo visudo -q -s -c -f $file_name ; then rm $file_name; return 4; fi	#Checking validation of new file...
+	if ! sudo visudo -q -s -c -f $file_name ; then rm $file_name; return 8; fi	#Checking validation of new file...
 
 	################################
 
-	unset original; unset temp; unset aux; unset all;
-
-	sudo chown 0 $file_name
-	sudo chmod 700 $file_name
-
-	if ! sudo mv $file_name '/etc/sudoers' ; then rm $file_name; return 8; fi	#Checks if the move was well-succeed
+	if ! sudo mv $file_name '/etc/sudoers' ; then rm $file_name; return 16; fi	#Checks if the move was well-succeed
 
 return 0;}
 
 
 function main(){
 
+	###################### Check List ######################
+
+	assert_comands_exist 'which' 'sudo' 'visudo' 'mkdir' 'chmod' 'whereis' 'cut' 'cat' 'perl' 'chown' 'grep' 'ls' 'rm' 'mv'
+
+	if ! define_PKG ; then
+
+		echo -e "\nYour package manager couldn't be determinated!"
+		close;
+	fi
+
 	################ Checking Installation ################
 
-	if know_command 'makeindex' || know_command 'pdflatex' || know_command 'texlive' || know_command 'bibtex' || know_command 'tlmgr' ; then
+	if know_command 'makeindex' || know_command 'pdflatex' || know_command 'bibtex' || know_command 'tlmgr' ; then
 
 		echo "It seems you already have some TexLive stuff installed like pdflatex, bibtex, tlmgr..."
 		echo "If you want to reinstall it from zero, please, remove all previous versions of it and run this script again..."
@@ -94,7 +154,7 @@ function main(){
 
 	if ! know_command 'wget' ; then
 
-		sudo apt-get install wget
+		eval "sudo $PKG wget"
 	fi
 
 	if [ ! -e 'install-tl-unx.tar.gz' ] ; then
@@ -112,12 +172,12 @@ function main(){
 
 	if ! know_command 'tar' ; then
 
-		sudo apt-get install tar
+		eval "sudo $PKG tar"
 	fi
 
 	if ! tar -xf 'install-tl-unx.tar.gz'; then
 
-		echo "File install-tl-unx.tar.gz couldn't be uncompressed, try to uncompress it your self and try to run it again."
+		echo "File install-tl-unx.tar.gz couldn't be uncompressed, try to uncompress it here your self and try to run it again."
 		close;
 	fi
 
@@ -133,21 +193,21 @@ function main(){
 
 		if [[ "$i" =~ ^install-tl-20.{6}$ ]] ; then
 
-			dir_name="$i";
-			break;
+			dir_name="$i"
+			break
 		fi
 	done
 
-	dir_year="${dir_name#install-tl-}";
-	dir_year="${dir_year::(-4)}";
+	dir_year=${dir_name#install-tl-}
+	dir_year=${dir_year::(-4)}
 
 	unset aux; unset i;
 
 	################ Openning Installation GUI ################
 
-	if [[ ! "$(dpkg -s perl-tk 2>/dev/null)" =~ "ok installed" ]] ; then
+	if [ -z "$(whereis perl-tk | cut -d':' -f2)" ] ; then
 
-		sudo apt-get install perl-tk
+		eval "sudo $PKG perl-tk"
 	fi
 
 	echo -e "\n################################################################"
@@ -159,12 +219,30 @@ function main(){
 	echo ''
 
 	cd "$dir_name"
-	sudo perl 'install-tl' -gui
+	sudo perl 'install-tl' -gui; aux=$?
 	cd ..
+
+	echo ''
 
 	################ Pos-installation procedures ################
 
-	local TexLive_BD='';
+	if (( $aux == 0 )) ; then
+
+		aux=$(ls '/usr/local/texlive/');
+		local temp;
+
+		for i in ${aux[@]} ; do
+
+			if [[ "$i" =~ ^[0-9]{4}$ ]] && ( [ -z "$temp" ] || (( "$temp" < "$i" )) ) ; then temp="$i"; fi
+
+		done
+
+		if [ -n "$temp" ] && (( "$temp" < "$dir_year" )) ; then dir_year="$temp"; fi
+
+		unset temp;
+	fi
+
+	local TexLive_BD;
 
 	if [ -d "/usr/local/texlive/$dir_year/bin" ] ; then
 
@@ -172,19 +250,26 @@ function main(){
 		TexLive_BD="$TexLive_BD/""$(ls $TexLive_BD)"
 	fi
 
-	if [ -d "$TexLive_BD" ] ; then
+	if [ -d "$TexLive_BD" ] ; then	# It worked!!!
+
+		echo -e "Please, disconsider the last message above. The script is already setting $TexLive_BD to be visible in all the system."
 
 		################ Configurating system to find installation ################
 
 		add_to_sudo "$TexLive_BD"; #Does not fails if already has...
 
-		aux=$(cat '/etc/environment');
+		if ! { aux=$(cat '/etc/environment' 2>'/dev/null'); } ; then
+
+			echo "Cound't read '/etc/environment'... It's impossible to set the installation properly without it."
+			close;
+		fi
+
 		local changed_environment=false;
 
 		if [[ ! "$aux" =~ "$TexLive_BD" ]] ; then
 
-			aux="${aux//'"'/}";
-			aux="${aux#*=}";
+			aux=${aux//'"'/}
+			aux=${aux#*=}
 
 			aux="$aux:$TexLive_BD"
 
@@ -193,7 +278,7 @@ function main(){
 			echo 'PATH="'"$aux"\" >"$aux_file"
 			sudo mv "$aux_file" '/etc/environment'
 
-			changed_environment=true;
+			changed_environment=true
 		fi
 
 		if [[ ! "$INFOPATH" =~ "/usr/local/texlive/$dir_year/texmf-dist/doc/info" ]] ; then
@@ -213,17 +298,30 @@ function main(){
 		if [ $changed_environment == true ] ; then
 
 			local restart;
-			echo -e -n "\nDo you want to restart your computer to apply changes in /etc/environment file? yes(y)/no(n): "
-			read restart
 
-			if [[ "$restart" =~ ^[yY]$ ]] ; then
+			know_command 'reboot'
+			local -r aux=$?
 
-				cd ..
-				sudo chmod -R 777 'TexLive_Download_Stuff'
-				sudo reboot now & exit 0
-			fi
+			while (( aux == 0 )) ; do	# While true if know_command 'reboot', while false otherwise...
 
-			if [[ ! "$restart" =~ ^[nN]$ ]] ; then echo "Unknown option..."; fi
+				echo -en "\nDo you want to restart your computer to apply changes in /etc/environment file? yes(y)/no(n): "
+				read restart
+
+				if [[ "$restart" =~ ^[yY]$ ]] ; then
+
+					cd ..
+					sudo chmod -R 777 'TexLive_Download_Stuff'
+					sudo reboot now & exit 0
+				fi
+
+				if [[ ! "$restart" =~ ^[nN]$ ]] ; then
+
+					echo "Unknown option..."
+				else
+
+					break
+				fi
+			done
 
 			echo "Don't forget to restart your computer manually for the installation to take effect."
 		fi
